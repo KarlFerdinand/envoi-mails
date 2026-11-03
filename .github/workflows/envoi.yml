@@ -1,0 +1,55 @@
+name: Envoi mails
+
+on:
+  push:
+    branches: [main]
+    paths: ["outbox/*.html"]
+  workflow_dispatch:
+    inputs:
+      fichier:
+        description: "Fichier à (r)envoyer, ex. outbox/tendances-2026-11-04.html"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: envoi-mails
+  cancel-in-progress: false
+
+jobs:
+  envoi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Lister les lettres à envoyer
+        id: liste
+        env:
+          AVANT: ${{ github.event.before }}
+          FICHIER: ${{ github.event.inputs.fichier }}
+        run: |
+          if [ -n "$FICHIER" ]; then
+            echo "$FICHIER" > a_envoyer.txt
+          elif [ -z "$AVANT" ] || [ "$AVANT" = "0000000000000000000000000000000000000000" ]; then
+            git show --name-only --diff-filter=A --format= HEAD -- 'outbox/*.html' > a_envoyer.txt
+          else
+            git diff --name-only --diff-filter=A "$AVANT" "$GITHUB_SHA" -- 'outbox/*.html' > a_envoyer.txt
+          fi
+          cat a_envoyer.txt
+
+      - name: Envoyer via Gmail
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          while IFS= read -r f; do
+            [ -n "$f" ] && python scripts/envoyer.py "$f"
+          done < a_envoyer.txt
